@@ -9,3 +9,6 @@
 /Reinforcement learning based recommendation.pdf
 /s44196-022-00176-4.pdf
 /User Profile.png
+
+.env
+*.env
