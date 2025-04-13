@@ -1,28 +1,26 @@
-from pdfminer.high_level import extract_text
+from flask import Flask, request, jsonify
+import os
+import tempfile
 import json
 import re
-import os
 import openai
+from pdfminer.high_level import extract_text
 from dotenv import load_dotenv
-import sys
 
 load_dotenv()
 openai.api_key = os.getenv('OPENAI_API_KEY')
+
+app = Flask(__name__)
 
 def extract_text_from_pdf(pdf_path: str) -> str:
     text = extract_text(pdf_path)
     return text
 
-
-
-#preprocessing
 def preprocess_resume_text(text: str) -> str:
-    import re
-
+    # Remove non-ascii characters and compress whitespace.
     text = text.encode('ascii', errors='ignore').decode()
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
-
 
 def extract_resume_features(preprocessed_text: str) -> dict:
     prompt = f"""
@@ -40,21 +38,19 @@ def extract_resume_features(preprocessed_text: str) -> dict:
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages = [
-                {"role": "system", "content":"You are an assistant that extracts resume features."},
+            messages=[
+                {"role": "system", "content": "You are an assistant that extracts resume features."},
                 {"role": "user", "content": prompt}
-
             ],
-            temperature = 0.2
+            temperature=0.2
         )
         content = response['choices'][0]['message']['content']
 
-        if content.startswith("``"):
+        # Remove markdown formatting if it exists.
+        if content.startswith("```"):
             content = content.strip("`").strip()
             if content.lower().startswith("json"):
                 content = content[4:].strip()
-
-
 
         data = json.loads(content)
     except Exception as e:
@@ -63,32 +59,43 @@ def extract_resume_features(preprocessed_text: str) -> dict:
             "raw_output": content if 'content' in locals() else "",
             "exception": str(e)
         }
-
     return data
 
+@app.route('/upload', methods=['POST'])
+def upload_resume():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part in the request'}), 400
 
-def main(file_path: str):
-    # Check if file exists
-    if not os.path.exists(file_path):
-        print(f"Error: File '{file_path}' not found")
-        return
-        
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext == '.pdf':
-        raw_text = extract_text_from_pdf(file_path)
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    if not file.filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Only PDF files are supported'}), 400
+
+    # Save the file temporarily
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            file.save(tmp_file.name)
+            tmp_file_path = tmp_file.name
+
+        # Extract and preprocess text
+        raw_text = extract_text_from_pdf(tmp_file_path)
         processed_text = preprocess_resume_text(raw_text)
         features = extract_resume_features(processed_text)
-        print(json.dumps(features, indent=2))
-    else: 
-        print("Error: Only PDF files are supported")
-        return
+    finally:
+        # Remove the temporary file
+        if os.path.exists(tmp_file_path):
+            os.remove(tmp_file_path)
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python resumeParsingLLM.py <input_file>")
-        sys.exit(1)
-    
-    file_path = " ".join(sys.argv[1:])  # Handle filenames with spaces
-    main(file_path)
+    return jsonify(features)
 
 
+@app.route('/test', methods=['GET'])
+def test():
+    return jsonify({'message': 'working'})
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
