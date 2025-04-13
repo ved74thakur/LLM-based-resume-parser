@@ -96,6 +96,6 @@ def upload_resume():
 def test():
     return jsonify({'message': 'working'})
 
-
+    
 if __name__ == '__main__':
     app.run(debug=True)
